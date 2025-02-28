@@ -4,6 +4,7 @@ import csv
 import re
 import os
 from io import StringIO
+from typing import List, Tuple
 from urllib.parse import quote, urlparse
 
 def main():
@@ -42,7 +43,18 @@ def main():
 
     report_missed_formats(missed_formats, args.downloads_folder)
 
-def get_dataset_ids(erddap_url, specified_dataset_ids, num_urls):
+def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, num_urls: int) -> List[str]:
+    """
+    Fetch dataset IDs from the ERDDAP server or use specified dataset IDs.
+
+    Args:
+        erddap_url (str): The base URL of the ERDDAP server.
+        specified_dataset_ids (str): Comma-separated list of dataset IDs specified by the user.
+        num_urls (int): Number of ERDDAP URLs provided.
+
+    Returns:
+        List[str]: A list of dataset IDs to download.
+    """
     if specified_dataset_ids and num_urls == 1:
         return specified_dataset_ids.split(',')
 
@@ -60,24 +72,68 @@ def get_dataset_ids(erddap_url, specified_dataset_ids, num_urls):
     print("Fetched Dataset IDs:", dataset_ids)
     return dataset_ids
 
-def all_formats_exist(download_dir, dataset_id, formats):
+def all_formats_exist(download_dir: str, dataset_id: str, formats: List[str]) -> bool:
+    """
+    Check if all required formats for a dataset already exist in the download directory.
+
+    Args:
+        download_dir (str): The directory where files are downloaded.
+        dataset_id (str): The ID of the dataset.
+        formats (List[str]): List of required formats.
+
+    Returns:
+        bool: True if all formats exist, False otherwise.
+    """
     return all(
         os.path.exists(os.path.join(download_dir, f"{dataset_id}.{fmt}")) for fmt in formats
     )
 
-def fetch_variables(erddap_url, dataset_id):
+def fetch_variables(erddap_url: str, dataset_id: str) -> List[str]:
+    """
+    Fetch variables for a dataset from the ERDDAP server.
+
+    Args:
+        erddap_url (str): The base URL of the ERDDAP server.
+        dataset_id (str): The ID of the dataset.
+
+    Returns:
+        List[str]: A list of variable names.
+    """
     dds_url = f"{erddap_url}/tabledap/{dataset_id}.dds"
     response = requests.get(dds_url)
     response.raise_for_status()
     print(f"Fetched .dds file for datasetID: {dataset_id}")
     return extract_variables(response.text)
 
-def extract_variables(dds_content):
+def extract_variables(dds_content: str) -> List[str]:
+    """
+    Extract variable names from the content of a .dds file.
+
+    Args:
+        dds_content (str): The content of the .dds file.
+
+    Returns:
+        List[str]: A list of variable names.
+    """
     variable_pattern = re.compile(r'\b(Byte|Int32|UInt32|Float64|String|Url)\s+(\w+);', re.MULTILINE)
     variables = [match[1] for match in variable_pattern.findall(dds_content)]
     return variables
 
-def download_dataset_files(erddap_url, dataset_id, variables, formats, download_dir, skip_existing):
+def download_dataset_files(erddap_url: str, dataset_id: str, variables: List[str], formats: List[str], download_dir: str, skip_existing: bool) -> List[Tuple[str, str, str]]:
+    """
+    Download dataset files in specified formats.
+
+    Args:
+        erddap_url (str): The base URL of the ERDDAP server.
+        dataset_id (str): The ID of the dataset.
+        variables (List[str]): List of variable names.
+        formats (List[str]): List of required formats.
+        download_dir (str): The directory where files are downloaded.
+        skip_existing (bool): Whether to skip existing files.
+
+    Returns:
+        List[Tuple[str, str, str]]: A list of tuples containing the ERDDAP URL, dataset ID, and format for missed downloads.
+    """
     missed_formats = []
     for fmt in formats:
         file_path = os.path.join(download_dir, f"{dataset_id}.{fmt}")
@@ -99,11 +155,30 @@ def download_dataset_files(erddap_url, dataset_id, variables, formats, download_
             missed_formats.append((erddap_url, dataset_id, fmt))
     return missed_formats
 
-def build_dataset_url(erddap_url, dataset_id, fmt, variables):
+def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str, variables: List[str]) -> str:
+    """
+    Build the URL to download a dataset in a specific format.
+
+    Args:
+        erddap_url (str): The base URL of the ERDDAP server.
+        dataset_id (str): The ID of the dataset.
+        fmt (str): The format to download.
+        variables (List[str]): List of variable names.
+
+    Returns:
+        str: The constructed URL.
+    """
     query_string = quote(','.join(variables))
     return f"{erddap_url}/tabledap/{dataset_id}.{fmt}?{query_string}"
 
-def report_missed_formats(missed_formats, downloads_folder):
+def report_missed_formats(missed_formats: List[Tuple[str, str, str]], downloads_folder: str) -> None:
+    """
+    Report missed formats to the console and write them to a file.
+
+    Args:
+        missed_formats (List[Tuple[str, str, str]]): A list of tuples containing the ERDDAP URL, dataset ID, and format for missed downloads.
+        downloads_folder (str): The folder where the missed formats file will be saved.
+    """
     if missed_formats:
         print("\nMissed formats:")
         for erddap_url, dataset_id, fmt in missed_formats:
