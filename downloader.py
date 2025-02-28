@@ -3,9 +3,17 @@ import requests
 import csv
 import re
 import os
+import logging
 from io import StringIO
 from typing import List, Tuple
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 from urllib.parse import quote, urlparse
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Download ERDDAP datasets.")
@@ -21,11 +29,13 @@ def main():
     missed_formats = []
 
     if args.datasetIDs and len(erddap_urls) > 1:
-        print("Error: datasetIDs can only be specified if there is one ERDDAP URL.")
+        logger.error("datasetIDs can only be specified if there is one ERDDAP URL.")
         return
 
+    start_time = datetime.now()
+
     for erddap_url in erddap_urls:
-        print(f"Processing ERDDAP URL: {erddap_url}")
+        logger.info(f"Processing ERDDAP URL: {erddap_url}")
         erddap_url_no_protocol_no_path = urlparse(erddap_url).netloc
 
         dataset_ids = get_dataset_ids(erddap_url, args.datasetIDs, len(erddap_urls))
@@ -35,13 +45,18 @@ def main():
             os.makedirs(download_dir, exist_ok=True)
 
             if args.skip_existing and all_formats_exist(download_dir, dataset_id, formats):
-                print(f"All formats for datasetID {dataset_id} already exist. Skipping.")
+                logger.debug(f"All formats for datasetID {dataset_id} already exist. Skipping.")
                 continue
 
             variables = fetch_variables(erddap_url, dataset_id)
+            if variables is None:
+                # Report all formats as missed if fetching variables fails
+                missed_formats.extend([(erddap_url, dataset_id, fmt) for fmt in formats])
+                continue
+
             missed_formats.extend(download_dataset_files(erddap_url, dataset_id, variables, formats, download_dir, args.skip_existing))
 
-    report_missed_formats(missed_formats, args.downloads_folder)
+    report_missed_formats(missed_formats, args.downloads_folder, start_time)
 
 def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, num_urls: int) -> List[str]:
     """
@@ -69,7 +84,7 @@ def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, num_urls: int) 
     for row in csv_reader:
         if row and row[0] and row[1] == 'table':
             dataset_ids.append(row[0])
-    print("Fetched Dataset IDs:", dataset_ids)
+    logger.debug(f"Fetched Dataset IDs: {dataset_ids}")
     return dataset_ids
 
 def all_formats_exist(download_dir: str, dataset_id: str, formats: List[str]) -> bool:
@@ -90,20 +105,30 @@ def all_formats_exist(download_dir: str, dataset_id: str, formats: List[str]) ->
 
 def fetch_variables(erddap_url: str, dataset_id: str) -> List[str]:
     """
-    Fetch variables for a dataset from the ERDDAP server.
+    Fetch variables for a dataset from the ERDDAP server with retry mechanism.
 
     Args:
         erddap_url (str): The base URL of the ERDDAP server.
         dataset_id (str): The ID of the dataset.
 
     Returns:
-        List[str]: A list of variable names.
+        List[str]: A list of variable names, or None if fetching fails.
     """
     dds_url = f"{erddap_url}/tabledap/{dataset_id}.dds"
-    response = requests.get(dds_url)
-    response.raise_for_status()
-    print(f"Fetched .dds file for datasetID: {dataset_id}")
-    return extract_variables(response.text)
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+
+    try:
+        response = session.get(dds_url)
+        response.raise_for_status()
+        logger.debug(f"Fetched .dds file for datasetID: {dataset_id}")
+        return extract_variables(response.text)
+    except requests.exceptions.RequestException:
+        logger.error(f"Failed to fetch .dds file for datasetID: {dataset_id}")
+        return None
 
 def extract_variables(dds_content: str) -> List[str]:
     """
@@ -117,6 +142,7 @@ def extract_variables(dds_content: str) -> List[str]:
     """
     variable_pattern = re.compile(r'\b(Byte|Int32|UInt32|Float64|String|Url)\s+(\w+);', re.MULTILINE)
     variables = [match[1] for match in variable_pattern.findall(dds_content)]
+    logger.debug(f"Extracted variables: {variables}")
     return variables
 
 def download_dataset_files(erddap_url: str, dataset_id: str, variables: List[str], formats: List[str], download_dir: str, skip_existing: bool) -> List[Tuple[str, str, str]]:
@@ -138,20 +164,19 @@ def download_dataset_files(erddap_url: str, dataset_id: str, variables: List[str
     for fmt in formats:
         file_path = os.path.join(download_dir, f"{dataset_id}.{fmt}")
         if skip_existing and os.path.exists(file_path):
-            print(f"Skipping existing file: {file_path}")
+            logger.debug(f"Skipping existing file: {file_path}")
             continue
 
         url = build_dataset_url(erddap_url, dataset_id, fmt, variables)
         try:
             response = requests.get(url)
             response.raise_for_status()
-            print(f"Fetched data for datasetID {dataset_id} in format {fmt}")
 
             with open(file_path, 'wb') as file:
                 file.write(response.content)
-            print(f"Saved data to {file_path}")
-        except requests.exceptions.HTTPError as e:
-            print(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}: {e}")
+            logger.debug(f"Saved data to {file_path}")
+        except requests.exceptions.HTTPError:
+            logger.error(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}")
             missed_formats.append((erddap_url, dataset_id, fmt))
     return missed_formats
 
@@ -171,25 +196,31 @@ def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str, variables: Lis
     query_string = quote(','.join(variables))
     return f"{erddap_url}/tabledap/{dataset_id}.{fmt}?{query_string}"
 
-def report_missed_formats(missed_formats: List[Tuple[str, str, str]], downloads_folder: str) -> None:
+def report_missed_formats(missed_formats: List[Tuple[str, str, str]], downloads_folder: str, start_time: datetime) -> None:
     """
-    Report missed formats to the console and write them to a file.
+    Report missed formats to a CSV file.
 
     Args:
         missed_formats (List[Tuple[str, str, str]]): A list of tuples containing the ERDDAP URL, dataset ID, and format for missed downloads.
         downloads_folder (str): The folder where the missed formats file will be saved.
+        start_time (datetime): The time when the script was started.
     """
-    if missed_formats:
-        print("\nMissed formats:")
-        for erddap_url, dataset_id, fmt in missed_formats:
-            print(f"ERDDAP URL: {erddap_url}, Dataset ID: {dataset_id}, Format: {fmt}")
+    missed_formats_file = os.path.join(downloads_folder, "missed_formats.csv")
+    file_exists = os.path.exists(missed_formats_file)
 
-        missed_formats_file = os.path.join(downloads_folder, "missed_formats.txt")
-        with open(missed_formats_file, 'w') as file:
-            file.write("Missed formats:\n")
-            for erddap_url, dataset_id, fmt in missed_formats:
-                file.write(f"ERDDAP URL: {erddap_url}, Dataset ID: {dataset_id}, Format: {fmt}\n")
-        print(f"Missed formats have been written to {missed_formats_file}")
+    with open(missed_formats_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
+
+        # Write the header if the file is new
+        if not file_exists:
+            writer.writerow(["time", "erddap_url", "datasetID", "format"])
+
+        # Write the missed formats
+        for erddap_url, dataset_id, fmt in missed_formats:
+            writer.writerow([start_time.isoformat(), erddap_url, dataset_id, fmt])
+
+    if missed_formats:
+        logger.info(f"Some formats were missed. Details have been written to {missed_formats_file}")
 
 if __name__ == "__main__":
     main()
