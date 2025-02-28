@@ -9,8 +9,9 @@ from urllib.parse import quote, urlparse
 def main():
     parser = argparse.ArgumentParser(description="Download ERDDAP datasets.")
     parser.add_argument("--erddap-urls", type=str, required=True, help="Comma-separated list of ERDDAP URLs.")
-    parser.add_argument("--formats", type=str, default="nc,das,csv,tsv,json", help="Download these formats for every dataset.")
+    parser.add_argument("--formats", type=str, default="nc,das,iso19115", help="Download these formats for every dataset.")
     parser.add_argument("--datasetIDs", type=str, help="Comma-separated list of dataset IDs to download. Can only be specified if there is one ERDDAP URL.")
+    parser.add_argument("--downloads-folder", type=str, default="downloads", help="Folder to save the downloaded files.")
     args = parser.parse_args()
 
     # Split the comma-separated list of ERDDAP URLs
@@ -26,9 +27,9 @@ def main():
     for erddap_url in erddap_urls:
         print(f"Processing ERDDAP URL: {erddap_url}")
 
-        # Strip the protocol from the ERDDAP URL for the directory name
+        # Strip the protocol and path from the ERDDAP URL for the directory name
         parsed_url = urlparse(erddap_url)
-        erddap_url_no_protocol = parsed_url.netloc + parsed_url.path.rstrip('/')
+        erddap_url_no_protocol_no_path = parsed_url.netloc
 
         # If datasetIDs are specified and there is only one ERDDAP URL, use the specified datasetIDs
         if args.datasetIDs and len(erddap_urls) == 1:
@@ -76,7 +77,7 @@ def main():
                     print(f"Fetched data for datasetID {dataset_id} in format {fmt}")
 
                     # Create the downloads directory if it doesn't exist
-                    download_dir = f"downloads/{erddap_url_no_protocol}/{dataset_id}"
+                    download_dir = os.path.join(args.downloads_folder, erddap_url_no_protocol_no_path, dataset_id)
                     os.makedirs(download_dir, exist_ok=True)
 
                     # Save the content to a file
@@ -95,7 +96,7 @@ def main():
             print(f"ERDDAP URL: {erddap_url}, Dataset ID: {dataset_id}, Format: {fmt}")
 
         # Write missed formats to a file
-        missed_formats_file = "missed_formats.txt"
+        missed_formats_file = os.path.join(args.downloads_folder, "missed_formats.txt")
         with open(missed_formats_file, 'w') as file:
             file.write("Missed formats:\n")
             for erddap_url, dataset_id, fmt in missed_formats:
