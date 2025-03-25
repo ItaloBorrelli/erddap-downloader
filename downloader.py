@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse
 from datetime import datetime
 from http.client import IncompleteRead
 from requests.exceptions import RequestException
+from bs4 import BeautifulSoup
 
 def main():
     parser = argparse.ArgumentParser(description="Download ERDDAP datasets.")
@@ -21,6 +22,8 @@ def main():
     parser.add_argument("--downloads-folder", type=str, default="downloads", help="Folder to save the downloaded files.")
     parser.add_argument("--skip-existing", action="store_true", help="Skip downloading files that already exist in the download folder.")
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
+    parser.add_argument("--grid-datasets", "-g", action="store_true", help="Include grid datasets.")
+    parser.add_argument("--table-datasets", "-t", action="store_true", help="Include table datasets.")
 
     args = parser.parse_args()
 
@@ -36,15 +39,19 @@ def main():
         logger.error("datasetIDs can only be specified if there is one ERDDAP URL.")
         return
 
+    if not args.table_datasets and not args.grid_datasets:
+        logger.error("One of --table-datasets (-t) or --grid-datasets (-g) must be selected.")
+        return
+
     start_time = datetime.now()
 
     for erddap_url in erddap_urls:
         logger.info(f"Processing ERDDAP URL: {erddap_url}")
         erddap_url_no_protocol_no_path = urlparse(erddap_url).netloc
 
-        dataset_ids = get_dataset_ids(erddap_url, args.datasetIDs, len(erddap_urls), logger)
+        dataset_ids = get_dataset_ids(erddap_url, args.datasetIDs, logger)
 
-        for dataset_id in dataset_ids:
+        for (dataset_id, is_table) in dataset_ids:
             download_dir = os.path.join(args.downloads_folder, erddap_url_no_protocol_no_path, dataset_id)
             os.makedirs(download_dir, exist_ok=True)
 
@@ -52,27 +59,54 @@ def main():
                 logger.debug(f"All formats for datasetID {dataset_id} already exist. Skipping.")
                 continue
 
-            missed_formats.extend(download_dataset_files(erddap_url, dataset_id, formats, download_dir, args.skip_existing, logger))
+            if is_table and args.table_datasets:
+                missed_formats.extend(download_dataset_files(erddap_url, dataset_id, formats, download_dir, args.skip_existing, logger))
+            elif not is_table and args.grid_datasets:
+                file_url = f"{erddap_url}/files/{dataset_id}"
+                file_locations = extract_file_locations_from_url(file_url)
+                for file_location in file_locations:
+                    url = f"{file_url}/{file_location}"
+                    file_path = os.path.join(download_dir, f"{file_location}")
+                    download(url, file_path, logger)
+
+
 
     report_missed_formats(missed_formats, args.downloads_folder, start_time, logger)
 
-def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, num_urls: int, logger: logging.Logger) -> List[str]:
+def extract_file_locations_from_url(file_url):
+    # Fetch the HTML content from the URL
+    response = requests.get(file_url)
+    response.raise_for_status()  # Check for HTTP errors
+
+    # Parse the HTML content
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    # Find all <tr> elements with an <img> tag with alt="[BIN]"
+    file_locations = []
+    for row in soup.find_all('tr'):
+        img_tag = row.find('img', alt='[BIN]')
+        if img_tag:
+            href_tag = row.find_all('td')[1].find('a')
+            if href_tag:
+                file_locations.append(href_tag['href'])
+
+    return file_locations
+
+def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, logger: logging.Logger) -> List[Tuple[str, bool]]:
     """
     Fetch dataset IDs from the ERDDAP server or use specified dataset IDs.
 
     Args:
         erddap_url (str): The base URL of the ERDDAP server.
         specified_dataset_ids (str): Comma-separated list of dataset IDs specified by the user.
-        num_urls (int): Number of ERDDAP URLs provided.
         logger (logging.Logger): Logger for logging messages.
 
     Returns:
-        List[str]: A list of dataset IDs to download.
+        List[Tuple[str, bool]]: A list of dataset IDs to download.
     """
-    if specified_dataset_ids and num_urls == 1:
-        return specified_dataset_ids.split(',')
+    specified_datasets = specified_dataset_ids.split(',') if specified_dataset_ids else None
 
-    datasets_url = f"{erddap_url}/tabledap/allDatasets.csv?datasetID"
+    datasets_url = f"{erddap_url}/tabledap/allDatasets.csv?datasetID%2CdataStructure"
     response = requests.get(datasets_url)
     response.raise_for_status()
 
@@ -81,8 +115,8 @@ def get_dataset_ids(erddap_url: str, specified_dataset_ids: str, num_urls: int, 
     csv_reader = csv.reader(csv_data)
     next(csv_reader)  # Skip the header row
     for row in csv_reader:
-        if row and row[0] and row[0] != 'allDatasets':
-            dataset_ids.append(row[0])
+        if row and row[0] and row[1] and row[0] != 'allDatasets' and (not specified_datasets or row[0] in specified_datasets):
+            dataset_ids.append((row[0], row[1] == 'table'))
     logger.debug(f"Fetched Dataset IDs: {dataset_ids}")
     return dataset_ids
 
@@ -127,16 +161,19 @@ def download_dataset_files(erddap_url: str, dataset_id: str, formats: List[str],
 
         url = build_dataset_url(erddap_url, dataset_id, fmt)
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-
-            with open(file_path, 'wb') as file:
-                file.write(response.content)
-            logger.debug(f"Saved data to {file_path}")
+            download(url, file_path, logger)
         except (RequestException, IncompleteRead) as e:
             logger.error(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}")
             missed_formats.append((erddap_url, dataset_id, fmt))
     return missed_formats
+
+def download(url, file_path, logger):
+    response = requests.get(url)
+    response.raise_for_status()
+
+    with open(file_path, 'wb') as file:
+        file.write(response.content)
+    logger.debug(f"Saved data to {file_path}")
 
 def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
     """

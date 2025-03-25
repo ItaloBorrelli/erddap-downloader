@@ -32,31 +32,34 @@ pip install -r requirements.txt
 - `--downloads-folder`: Folder to save the downloaded files. Default is `downloads`.
 - `--skip-existing`: Skip downloading files that already exist in the download folder.
 - `--log-level`: Set the logging level. Options are `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default is `INFO`.
+- One or both of the following needs to be selected:
+  - `--grid-datasets` or `-g`: Download grid dataset files.
+  - `--table-datasets` or `-t`: Download table dataset files.
 
 ### Examples
 
 Specify multiple ERDDAP URLs and fetch datasets:
 
 ```sh
-python downloader.py --erddap-urls https://example1.com/erddap,https://example2.com/erddap --formats nc,das,csv,tsv,json
+python downloader.py --erddap-urls https://example1.com/erddap,https://example2.com/erddap --formats nc,das,csv,tsv,json -t -g
 ```
 
 Specify dataset IDs for a single ERDDAP URL:
 
 ```sh
-python downloader.py --erddap-urls https://example.com/erddap --datasetIDs dataset1,dataset2,dataset3 --formats nc,das,csv,tsv,json
+python downloader.py --erddap-urls https://example.com/erddap --datasetIDs dataset1,dataset2,dataset3 --formats nc,das,csv,tsv,json -t
 ```
 
 Specify a custom downloads folder:
 
 ```sh
-python downloader.py --erddap-urls https://example.com/erddap --datasetIDs dataset1,dataset2,dataset3 --formats nc,das,csv,tsv,json --downloads-folder /path/to/custom/downloads
+python downloader.py --erddap-urls https://example.com/erddap --datasetIDs dataset1,dataset2,dataset3 --formats nc,das,csv,tsv,json -t --downloads-folder /path/to/custom/downloads
 ```
 
 Set the logging level to `DEBUG`:
 
 ```sh
-python downloader.py --erddap-urls https://example.com/erddap --formats nc,das --log-level DEBUG
+python downloader.py --erddap-urls https://example.com/erddap --formats nc,das -t --log-level DEBUG
 ```
 
 ### Directory Structure
