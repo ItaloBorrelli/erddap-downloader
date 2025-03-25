@@ -16,7 +16,7 @@ from requests.exceptions import RequestException
 def main():
     parser = argparse.ArgumentParser(description="Download ERDDAP datasets.")
     parser.add_argument("--erddap-urls", type=str, required=True, help="Comma-separated list of ERDDAP URLs.")
-    parser.add_argument("--formats", type=str, default="nc,das,iso19115", help="Download these formats for every dataset.")
+    parser.add_argument("--formats", type=str, default="ncCF,das,iso19115", help="Download these formats for every dataset.")
     parser.add_argument("--datasetIDs", type=str, help="Comma-separated list of dataset IDs to download. Can only be specified if there is one ERDDAP URL.")
     parser.add_argument("--downloads-folder", type=str, default="downloads", help="Folder to save the downloaded files.")
     parser.add_argument("--skip-existing", action="store_true", help="Skip downloading files that already exist in the download folder.")
