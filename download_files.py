@@ -47,7 +47,7 @@ def main() -> None:
     for erddap_url in erddap_urls:
         erddap_url_no_protocol_no_path = urlparse(erddap_url).netloc
         download_dir = os.path.join(
-            args.downloads_folder, erddap_url_no_protocol_no_path
+            args.downloads_folder, erddap_url_no_protocol_no_path, "files"
         )
         os.makedirs(download_dir, exist_ok=True)
         file_url = f"{erddap_url}/files/"
@@ -82,6 +82,7 @@ def download_files(
         download_files(erddap_url, new_url, new_download_location, logger)
     return missed_files
 
+
 def extract_file_names_from_url(file_url: str, logger: logging.Logger) -> List[str]:
     """Extract file names from the specified URL."""
     response = requests.get(file_url)
@@ -100,6 +101,7 @@ def extract_file_names_from_url(file_url: str, logger: logging.Logger) -> List[s
                     file_locations.append(href_tag["href"])
 
     return file_locations
+
 
 def extract_folder_names_from_url(file_url: str, logger: logging.Logger) -> List[str]:
     """Extract file names from the specified URL."""
@@ -151,6 +153,7 @@ def extract_grid_variables_from_url(file_url: str, logger) -> List[str]:
     logger.debug(values)
     return values
 
+
 def download(url: str, file_path: str, logger: logging.Logger) -> None:
     """Download a file from the specified URL and save it to the file path."""
     response = requests.get(url)
@@ -158,6 +161,7 @@ def download(url: str, file_path: str, logger: logging.Logger) -> None:
     with open(file_path, "wb") as file:
         file.write(response.content)
     logger.debug(f"Saved data to {file_path}")
+
 
 if __name__ == "__main__":
     main()
