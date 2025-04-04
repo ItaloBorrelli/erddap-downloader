@@ -109,6 +109,8 @@ def main() -> None:
             did_download = False
             if is_table and args.table_datasets:
                 did_download = True
+                if has_files:
+                    error_report.extend(download_files(erddap_url, dataset_id, file_url, download_dir, logger))
                 error_report.extend(
                     download_dataset_files(
                         erddap_url,
@@ -163,7 +165,7 @@ def download_files(erddap_url: str, dataset_id: str, file_url: str, download_dir
     """
     missed_files = []
     try:
-        file_names = extract_file_names_from_url(file_url)
+        file_names = extract_file_names_from_url(file_url, logger)
     except (RequestException, IncompleteRead) as e:
         logger.error(f"Failed to fetch files for datasetID {dataset_id}. Error: {e}")
         missed_files.append((erddap_url, dataset_id, "all", e))
@@ -181,7 +183,7 @@ def download_files(erddap_url: str, dataset_id: str, file_url: str, download_dir
             missed_files.append((erddap_url, dataset_id, file_name, e))
     return missed_files
 
-def extract_file_names_from_url(file_url: str) -> List[str]:
+def extract_file_names_from_url(file_url: str, logger) -> List[str]:
     """
     Extract file names from the specified URL.
 
@@ -201,11 +203,14 @@ def extract_file_names_from_url(file_url: str) -> List[str]:
     # Find all <tr> elements with an <img> tag with alt="[BIN]"
     file_locations = []
     for row in soup.find_all("tr"):
-        img_tag = row.find("img", alt="[BIN]")
-        if img_tag:
-            href_tag = row.find_all("td")[1].find("a")
-            if href_tag:
-                file_locations.append(href_tag["href"])
+        tds = row.find_all("td")
+        if len(tds) > 0:
+            img_tag = tds[0].find("img")
+            if img_tag:
+                href_tag = row.find_all("td")[1].find("a")
+                if href_tag and href_tag.get("rel"):
+                    if ("bookmark" in href_tag.get("rel")):
+                        file_locations.append(href_tag["href"])
 
     return file_locations
 
