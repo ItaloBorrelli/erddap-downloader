@@ -132,7 +132,7 @@ def main():
                 else:
                     logger.error("not implemented yet")
 
-    # report_missed_formats(missed_formats, args.downloads_folder, start_time, logger)
+    report_missed_formats(missed_formats, args.downloads_folder, start_time, logger)
 
 def extract_file_locations_from_url(file_url):
     # Fetch the HTML content from the URL
@@ -300,7 +300,7 @@ def report_missed_formats(
     """
     missed_formats_file = os.path.join(
         downloads_folder, "missed_formats-{date:%Y-%m-%d_%H:%M:%S}.csv"
-    ).format(date=datetime.datetime.now())
+    ).format(date=datetime.now())
     file_exists = os.path.exists(missed_formats_file)
 
     with open(missed_formats_file, mode="a", newline="") as file:
