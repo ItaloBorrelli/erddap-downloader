@@ -126,7 +126,7 @@ def main():
                     file_url = files
                     file_locations = extract_file_locations_from_url(file_url)
                     for file_location in file_locations:
-                        url = f"{file_url}/{file_location}"
+                        url = f"{file_url}{file_location}"
                         file_path = os.path.join(download_dir, f"{file_location}")
                         download(url, file_path, logger)
                 else:
