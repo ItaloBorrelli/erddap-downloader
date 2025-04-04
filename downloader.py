@@ -329,7 +329,7 @@ def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
     return f"{erddap_url}/tabledap/{dataset_id}.{fmt}"
 
 def do_error_report(
-    missed_formats: List[Tuple[str, str, str]],
+    missed_formats: List[Tuple[str, str, str, str]],
     downloads_folder: str,
     start_time: datetime,
     logger: logging.Logger,
@@ -338,30 +338,30 @@ def do_error_report(
     Report missed formats to a CSV file.
 
     Args:
-        missed_formats (List[Tuple[str, str, str]]): A list of tuples containing the ERDDAP URL, dataset ID, and format for missed downloads.
+        missed_formats (List[Tuple[str, str, str, str]]): A list of tuples containing the ERDDAP URL, dataset ID, format/file name and error for missed downloads.
         downloads_folder (str): The folder where the missed formats file will be saved.
         start_time (datetime): The time when the script was started.
         logger (logging.Logger): Logger for logging messages.
     """
-    missed_formats_file = os.path.join(
+    report_file = os.path.join(
         downloads_folder, "missed_formats-{date:%Y-%m-%d_%H:%M:%S}.csv"
     ).format(date=datetime.now())
-    file_exists = os.path.exists(missed_formats_file)
+    file_exists = os.path.exists(report_file)
 
-    with open(missed_formats_file, mode="a", newline="") as file:
+    with open(report_file, mode="a", newline="") as file:
         writer = csv.writer(file)
 
         # Write the header if the file is new
         if not file_exists:
-            writer.writerow(["time", "erddap_url", "datasetID", "format"])
+            writer.writerow(["time", "erddap_url", "datasetID", "missed", "error"])
 
         # Write the missed formats
-        for erddap_url, dataset_id, fmt in missed_formats:
-            writer.writerow([start_time.isoformat(), erddap_url, dataset_id, fmt])
+        for erddap_url, dataset_id, missed, e in missed_formats:
+            writer.writerow([start_time.isoformat(), erddap_url, dataset_id, missed, e])
 
     if missed_formats:
         logger.info(
-            f"Some formats were missed. Details have been written to {missed_formats_file}"
+            f"Some content was missed. Details have been written to {report_file}"
         )
 
 
