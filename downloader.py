@@ -2,20 +2,19 @@ import argparse
 import logging
 import requests
 import csv
-import re
 import os
 from io import StringIO
 from typing import List, Tuple
-from urllib3.util.retry import Retry
-from requests.adapters import HTTPAdapter
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 from datetime import datetime
 from http.client import IncompleteRead
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 
-
-def main():
+def main() -> None:
+    """
+    Main function to download ERDDAP datasets based on user-specified parameters.
+    """
     parser = argparse.ArgumentParser(description="Download ERDDAP datasets.")
     parser.add_argument(
         "--erddap-urls",
@@ -77,7 +76,7 @@ def main():
         logger.error("datasetIDs can only be specified if there is one ERDDAP URL.")
         return
 
-    if not args.table_datasets and not args.grid_datasets_1 and not args.grid_dataets_2:
+    if not args.table_datasets and not args.grid_datasets_1 and not args.grid_datasets_2:
         logger.error(
             "At least one of --table-datasets (-t) or --grid-datasets-1 (-g) or --grid-datasets-2 (-h) must be selected."
         )
@@ -134,14 +133,28 @@ def main():
 
     do_error_report(error_report, args.downloads_folder, start_time, logger)
 
-def download_files(erddap_url, dataset_id, file_url, download_dir, logger):
+def download_files(erddap_url: str, dataset_id: str, file_url: str, download_dir: str, logger: logging.Logger) -> List[Tuple[str, str, str, Exception]]:
+    """
+    Download files for a dataset from the specified URL.
+
+    Args:
+        erddap_url (str): The base URL of the ERDDAP server.
+        dataset_id (str): The ID of the dataset.
+        file_url (str): The URL to fetch file names from.
+        download_dir (str): The directory where files are downloaded.
+        logger (logging.Logger): Logger for logging messages.
+
+    Returns:
+        List[Tuple[str, str, str, Exception]]: A list of tuples containing the ERDDAP URL, dataset ID, file name, and error for missed downloads.
+    """
     missed_files = []
     try:
         file_names = extract_file_names_from_url(file_url)
     except (RequestException, IncompleteRead) as e:
         logger.error(f"Failed to fetch files for datasetID {dataset_id}. Error: {e}")
         missed_files.append((erddap_url, dataset_id, "all", e))
-        return
+        return missed_files
+
     for file_name in file_names:
         url = f"{file_url}{file_name}"
         file_path = os.path.join(download_dir, f"{file_name}")
@@ -154,7 +167,16 @@ def download_files(erddap_url, dataset_id, file_url, download_dir, logger):
             missed_files.append((erddap_url, dataset_id, file_name, e))
     return missed_files
 
-def extract_file_names_from_url(file_url):
+def extract_file_names_from_url(file_url: str) -> List[str]:
+    """
+    Extract file names from the specified URL.
+
+    Args:
+        file_url (str): The URL to fetch file names from.
+
+    Returns:
+        List[str]: A list of file names extracted from the URL.
+    """
     # Fetch the HTML content from the URL
     response = requests.get(file_url)
     response.raise_for_status()  # Check for HTTP errors
@@ -173,7 +195,16 @@ def extract_file_names_from_url(file_url):
 
     return file_locations
 
-def extract_grid_variables_from_url(file_url):
+def extract_grid_variables_from_url(file_url: str) -> List[str]:
+    """
+    Extract grid variables from the specified URL.
+
+    Args:
+        file_url (str): The URL to fetch grid variables from.
+
+    Returns:
+        List[str]: A list of grid variable values extracted from the URL.
+    """
     response = requests.get(file_url)
     response.raise_for_status()
     soup = BeautifulSoup(response.content, "html.parser")
@@ -204,7 +235,7 @@ def extract_grid_variables_from_url(file_url):
 
 def get_dataset_ids(
     erddap_url: str, specified_dataset_ids: str, logger: logging.Logger
-) -> List[Tuple[str, bool]]:
+) -> List[Tuple[str, str, str, str]]:
     """
     Fetch dataset IDs from the ERDDAP server or use specified dataset IDs.
 
@@ -273,7 +304,7 @@ def download_dataset_files(
     download_dir: str,
     skip_existing: bool,
     logger: logging.Logger,
-) -> List[Tuple[str, str, str, str]]:
+) -> List[Tuple[str, str, str, Exception]]:
     """
     Download dataset files in specified formats.
 
@@ -286,7 +317,7 @@ def download_dataset_files(
         logger (logging.Logger): Logger for logging messages.
 
     Returns:
-        List[Tuple[str, str, str]]: A list of tuples containing the ERDDAP URL, dataset ID, and format for missed downloads.
+        List[Tuple[str, str, str, Exception]]: A list of tuples containing the ERDDAP URL, dataset ID, format, and error for missed downloads.
     """
     missed_formats = []
     for fmt in formats:
@@ -305,8 +336,15 @@ def download_dataset_files(
             missed_formats.append((erddap_url, dataset_id, fmt, e))
     return missed_formats
 
+def download(url: str, file_path: str, logger: logging.Logger) -> None:
+    """
+    Download a file from the specified URL and save it to the file path.
 
-def download(url, file_path, logger):
+    Args:
+        url (str): The URL to download the file from.
+        file_path (str): The path to save the downloaded file.
+        logger (logging.Logger): Logger for logging messages.
+    """
     response = requests.get(url)
     response.raise_for_status()
 
@@ -329,7 +367,7 @@ def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
     return f"{erddap_url}/tabledap/{dataset_id}.{fmt}"
 
 def do_error_report(
-    missed_formats: List[Tuple[str, str, str, str]],
+    missed_formats: List[Tuple[str, str, str, Exception]],
     downloads_folder: str,
     start_time: datetime,
     logger: logging.Logger,
@@ -338,7 +376,7 @@ def do_error_report(
     Report missed formats to a CSV file.
 
     Args:
-        missed_formats (List[Tuple[str, str, str, str]]): A list of tuples containing the ERDDAP URL, dataset ID, format/file name and error for missed downloads.
+        missed_formats (List[Tuple[str, str, str, Exception]]): A list of tuples containing the ERDDAP URL, dataset ID, format/file name, and error for missed downloads.
         downloads_folder (str): The folder where the missed formats file will be saved.
         start_time (datetime): The time when the script was started.
         logger (logging.Logger): Logger for logging messages.
@@ -363,7 +401,6 @@ def do_error_report(
         logger.info(
             f"Some content was missed. Details have been written to {report_file}"
         )
-
 
 if __name__ == "__main__":
     main()
