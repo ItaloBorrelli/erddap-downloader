@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument(
         "--grid-datasets-1", "-g", action="store_true", help="Include grid datasets with files (only downloads source files)."
     )
-    parser.add_argument("--grid-datasets-2", "-h", action="store_true", help="Include grid datasets without files (downloads based on formats)." )
+    parser.add_argument("--grid-datasets-2", "-j", action="store_true", help="Include grid datasets without files (downloads based on formats)." )
     parser.add_argument(
         "--table-datasets", "-t", action="store_true", help="Include table datasets."
     )
@@ -97,7 +97,7 @@ def main() -> None:
             os.makedirs(download_dir, exist_ok=True)
 
             if args.skip_existing and all_formats_exist(
-                download_dir, dataset_id, formats, logger
+                download_dir, dataset_id, formats
             ):
                 logger.debug(
                     f"All formats for datasetID {dataset_id} already exist. Skipping."
@@ -113,10 +113,12 @@ def main() -> None:
                     download_dataset_files(
                         erddap_url,
                         dataset_id,
+                        is_table,
                         formats,
                         download_dir,
                         args.skip_existing,
                         logger,
+                        []
                     )
                 )
             elif not is_table and has_files and args.grid_datasets_1:
@@ -124,7 +126,19 @@ def main() -> None:
                 error_report.extend(download_files(erddap_url, dataset_id, file_url, download_dir, logger))
             elif not is_table and not has_files and args.grid_datasets_2:
                 did_download = True
-                logger.error("not implemented yet")
+                vars = extract_grid_variables_from_url(f"{erddap_url}/griddap/{dataset_id}.html")
+                error_report.extend(
+                    download_dataset_files(
+                        erddap_url,
+                        dataset_id,
+                        is_table,
+                        formats,
+                        download_dir,
+                        args.skip_existing,
+                        logger,
+                        vars
+                    )
+                )
 
             # If file was to be downloaded, then download the ISO 19115 for it
             if (did_download and iso19115_url and iso19115_url != ""):
@@ -278,7 +292,7 @@ def get_dataset_ids(
     return dataset_ids
 
 def all_formats_exist(
-    download_dir: str, dataset_id: str, formats: List[str], logger: logging.Logger
+    download_dir: str, dataset_id: str, formats: List[str]
 ) -> bool:
     """
     Check if all required formats for a dataset already exist in the download directory.
@@ -287,7 +301,6 @@ def all_formats_exist(
         download_dir (str): The directory where files are downloaded.
         dataset_id (str): The ID of the dataset.
         formats (List[str]): List of required formats.
-        logger (logging.Logger): Logger for logging messages.
 
     Returns:
         bool: True if all formats exist, False otherwise.
@@ -300,10 +313,12 @@ def all_formats_exist(
 def download_dataset_files(
     erddap_url: str,
     dataset_id: str,
+    is_table: bool,
     formats: List[str],
     download_dir: str,
     skip_existing: bool,
     logger: logging.Logger,
+    vars: List[str]
 ) -> List[Tuple[str, str, str, Exception]]:
     """
     Download dataset files in specified formats.
@@ -325,14 +340,26 @@ def download_dataset_files(
         if skip_existing and os.path.exists(file_path):
             logger.debug(f"Skipping existing file: {file_path}")
             continue
-
-        url = build_dataset_url(erddap_url, dataset_id, fmt)
+        qs = "" if len(vars) == 0 else f"?{'%2C'.join(vars)}"
+        path = "tabledap" if is_table else "griddap"
+        url = f"{erddap_url}/{path}/{dataset_id}.{fmt}{qs}"
         try:
-            download(url, file_path, logger)
+            response = requests.get(url)
+            response.raise_for_status()
+
+            with open(file_path, "wb") as file:
+                file.write(response.content)
+            logger.debug(f"Saved data to {file_path}")
+        except requests.HTTPError as e:
+            if response.status_code == 400 and fmt == "ncCF":
+                download_dataset_files(erddap_url,dataset_id,is_table,["nc"],download_dir,skip_existing, logger, vars)
+                message = f"ncCF not available for cdm_data_type=\"Other\". Downloading nc instead."
+                logger.info(message)
+            else:
+                logger.error(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}")
+                missed_formats.append((erddap_url, dataset_id, fmt, e))
         except (RequestException, IncompleteRead) as e:
-            logger.error(
-                f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}"
-            )
+            logger.error(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}")
             missed_formats.append((erddap_url, dataset_id, fmt, e))
     return missed_formats
 
@@ -351,20 +378,6 @@ def download(url: str, file_path: str, logger: logging.Logger) -> None:
     with open(file_path, "wb") as file:
         file.write(response.content)
     logger.debug(f"Saved data to {file_path}")
-
-def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
-    """
-    Build the URL to download a dataset in a specific format.
-
-    Args:
-        erddap_url (str): The base URL of the ERDDAP server.
-        dataset_id (str): The ID of the dataset.
-        fmt (str): The format to download.
-
-    Returns:
-        str: The constructed URL.
-    """
-    return f"{erddap_url}/tabledap/{dataset_id}.{fmt}"
 
 def do_error_report(
     missed_formats: List[Tuple[str, str, str, Exception]],
