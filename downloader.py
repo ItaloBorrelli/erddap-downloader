@@ -8,7 +8,7 @@ from typing import List, Tuple
 from urllib.parse import urlparse
 from datetime import datetime
 from http.client import IncompleteRead
-from requests.exceptions import RequestException
+from requests.exceptions import RequestException, HTTPError
 from bs4 import BeautifulSoup
 
 def main() -> None:
@@ -78,7 +78,7 @@ def main() -> None:
 
     if not args.table_datasets and not args.grid_datasets_1 and not args.grid_datasets_2:
         logger.error(
-            "At least one of --table-datasets (-t) or --grid-datasets-1 (-g) or --grid-datasets-2 (-h) must be selected."
+            "At least one of --table-datasets (-t) or --grid-datasets-1 (-g) or --grid-datasets-2 (-j) must be selected."
         )
         return
 
@@ -143,7 +143,7 @@ def main() -> None:
                 )
 
             # If file was to be downloaded, then download the ISO 19115 for it
-            if (did_download and iso19115_url and iso19115_url != ""):
+            if did_download and iso19115_url and iso19115_url != "":
                 iso19115_file_path = os.path.join(download_dir, f"{dataset_id}.iso19115")
                 download(iso19115_url, iso19115_file_path, logger)
 
@@ -183,12 +183,13 @@ def download_files(erddap_url: str, dataset_id: str, file_url: str, download_dir
             missed_files.append((erddap_url, dataset_id, file_name, e))
     return missed_files
 
-def extract_file_names_from_url(file_url: str, logger) -> List[str]:
+def extract_file_names_from_url(file_url: str, logger: logging.Logger) -> List[str]:
     """
     Extract file names from the specified URL.
 
     Args:
         file_url (str): The URL to fetch file names from.
+        logger (logging.Logger): Logger for logging messages.
 
     Returns:
         List[str]: A list of file names extracted from the URL.
@@ -207,10 +208,9 @@ def extract_file_names_from_url(file_url: str, logger) -> List[str]:
         if len(tds) > 0:
             img_tag = tds[0].find("img")
             if img_tag:
-                href_tag = row.find_all("td")[1].find("a")
-                if href_tag and href_tag.get("rel"):
-                    if ("bookmark" in href_tag.get("rel")):
-                        file_locations.append(href_tag["href"])
+                href_tag = tds[1].find("a")
+                if href_tag and "bookmark" in href_tag.get("rel", ""):
+                    file_locations.append(href_tag["href"])
 
     return file_locations
 
@@ -331,10 +331,12 @@ def download_dataset_files(
     Args:
         erddap_url (str): The base URL of the ERDDAP server.
         dataset_id (str): The ID of the dataset.
+        is_table (bool): Whether the dataset is a table.
         formats (List[str]): List of required formats.
         download_dir (str): The directory where files are downloaded.
         skip_existing (bool): Whether to skip existing files.
         logger (logging.Logger): Logger for logging messages.
+        vars (List[str]): List of variables to include in the URL.
 
     Returns:
         List[Tuple[str, str, str, Exception]]: A list of tuples containing the ERDDAP URL, dataset ID, format, and error for missed downloads.
@@ -355,10 +357,10 @@ def download_dataset_files(
             with open(file_path, "wb") as file:
                 file.write(response.content)
             logger.debug(f"Saved data to {file_path}")
-        except requests.HTTPError as e:
+        except HTTPError as e:
             if response.status_code == 400 and fmt == "ncCF":
                 if not skip_existing or not os.path.exists(os.path.join(download_dir, f"{dataset_id}.nc")):
-                    download_dataset_files(erddap_url,dataset_id,is_table,["nc"],download_dir,skip_existing, logger, vars)
+                    download_dataset_files(erddap_url, dataset_id, is_table, ["nc"], download_dir, skip_existing, logger, vars)
                     message = f"ncCF not available for cdm_data_type=\"Other\". Downloading nc instead."
                     logger.info(message)
             else:
