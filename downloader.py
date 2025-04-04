@@ -53,8 +53,9 @@ def main():
         help="Set the logging level.",
     )
     parser.add_argument(
-        "--grid-datasets", "-g", action="store_true", help="Include grid datasets."
+        "--grid-datasets-1", "-g", action="store_true", help="Include grid datasets with files (only downloads source files)."
     )
+    parser.add_argument("--grid-datasets-2", "-h", action="store_true", help="Include grid datasets without files (downloads based on formats)." )
     parser.add_argument(
         "--table-datasets", "-t", action="store_true", help="Include table datasets."
     )
@@ -70,15 +71,15 @@ def main():
 
     erddap_urls = args.erddap_urls.split(",")
     formats = args.formats.split(",")
-    missed_formats = []
+    error_report = []
 
     if args.datasetIDs and len(erddap_urls) > 1:
         logger.error("datasetIDs can only be specified if there is one ERDDAP URL.")
         return
 
-    if not args.table_datasets and not args.grid_datasets:
+    if not args.table_datasets and not args.grid_datasets_1 and not args.grid_dataets_2:
         logger.error(
-            "One of --table-datasets (-t) or --grid-datasets (-g) must be selected."
+            "At least one of --table-datasets (-t) or --grid-datasets-1 (-g) or --grid-datasets-2 (-h) must be selected."
         )
         return
 
@@ -90,7 +91,7 @@ def main():
 
         dataset_ids = get_dataset_ids(erddap_url, args.datasetIDs, logger)
 
-        for dataset_id, data_structure, files, iso19115 in dataset_ids:
+        for dataset_id, data_structure, file_url, iso19115_url in dataset_ids:
             download_dir = os.path.join(
                 args.downloads_folder, erddap_url_no_protocol_no_path, dataset_id
             )
@@ -104,11 +105,12 @@ def main():
                 )
                 continue
 
-            if data_structure == "table" and args.table_datasets:
-                if (iso19115 and iso19115 != ""):
-                    file_path = os.path.join(download_dir, f"{dataset_id}.iso19115")
-                    download(iso19115, file_path, logger)
-                missed_formats.extend(
+            is_table = data_structure == "table"
+            has_files = file_url and file_url != ""
+            did_download = False
+            if is_table and args.table_datasets:
+                did_download = True
+                error_report.extend(
                     download_dataset_files(
                         erddap_url,
                         dataset_id,
@@ -118,23 +120,41 @@ def main():
                         logger,
                     )
                 )
-            elif not data_structure =="table" and args.grid_datasets:
-                if (iso19115 and iso19115 != ""):
-                    file_path = os.path.join(download_dir, f"{dataset_id}.iso19115")
-                    download(iso19115, file_path, logger)
-                if (files and files != ""):
-                    file_url = files
-                    file_locations = extract_file_locations_from_url(file_url)
-                    for file_location in file_locations:
-                        url = f"{file_url}{file_location}"
-                        file_path = os.path.join(download_dir, f"{file_location}")
-                        download(url, file_path, logger)
-                else:
-                    logger.error("not implemented yet")
+            elif not is_table and has_files and args.grid_datasets_1:
+                did_download = True
+                error_report.extend(download_files(erddap_url, dataset_id, file_url, download_dir, logger))
+            elif not is_table and not has_files and args.grid_datasets_2:
+                did_download = True
+                logger.error("not implemented yet")
 
-    report_missed_formats(missed_formats, args.downloads_folder, start_time, logger)
+            # If file was to be downloaded, then download the ISO 19115 for it
+            if (did_download and iso19115_url and iso19115_url != ""):
+                iso19115_file_path = os.path.join(download_dir, f"{dataset_id}.iso19115")
+                download(iso19115_url, iso19115_file_path, logger)
 
-def extract_file_locations_from_url(file_url):
+    do_error_report(error_report, args.downloads_folder, start_time, logger)
+
+def download_files(erddap_url, dataset_id, file_url, download_dir, logger):
+    missed_files = []
+    try:
+        file_names = extract_file_names_from_url(file_url)
+    except (RequestException, IncompleteRead) as e:
+        logger.error(f"Failed to fetch files for datasetID {dataset_id}. Error: {e}")
+        missed_files.append((erddap_url, dataset_id, "all", e))
+        return
+    for file_name in file_names:
+        url = f"{file_url}{file_name}"
+        file_path = os.path.join(download_dir, f"{file_name}")
+        try:
+            download(url, file_path, logger)
+        except (RequestException, IncompleteRead) as e:
+            logger.error(
+                f"Failed to fetch file {file_name} for datasetID {dataset_id}. Error: {e}"
+            )
+            missed_files.append((erddap_url, dataset_id, file_name, e))
+    return missed_files
+
+def extract_file_names_from_url(file_url):
     # Fetch the HTML content from the URL
     response = requests.get(file_url)
     response.raise_for_status()  # Check for HTTP errors
@@ -153,6 +173,34 @@ def extract_file_locations_from_url(file_url):
 
     return file_locations
 
+def extract_grid_variables_from_url(file_url):
+    response = requests.get(file_url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    # Find the table where the first row contains "Grid Variables"
+    tables = soup.find_all('table')
+    target_table = None
+
+    for table in tables:
+        first_row = table.find('tr')
+        if first_row and "Grid Variables" in first_row.get_text():
+            target_table = table
+            break
+
+    if not target_table:
+        return []
+
+    # Extract values from rows 2..n
+    values = []
+    rows = target_table.find_all('tr')[1:]  # Skip the first row
+    for row in rows:
+        td = row.find('td')
+        input_tag = td.find('input')
+        if input_tag and 'value' in input_tag.attrs:
+            values.append(input_tag['value'])
+
+    return values
 
 def get_dataset_ids(
     erddap_url: str, specified_dataset_ids: str, logger: logging.Logger
@@ -187,14 +235,14 @@ def get_dataset_ids(
     for row in csv_reader:
         dataset_id = row[dataset_id_index]
         data_structure = row[data_structure_index]
-        files = row[files_index]
-        iso19115 = row[iso19115_index]
+        file_url = row[files_index]
+        iso19115_url = row[iso19115_index]
         if (
             dataset_id != "allDatasets"
             and data_structure
             and (not specified_datasets or dataset_id in specified_datasets)
         ):
-            dataset_ids.append((dataset_id, data_structure, files, iso19115))
+            dataset_ids.append((dataset_id, data_structure, file_url, iso19115_url))
     logger.debug(f"Fetched Dataset IDs: {dataset_ids}")
     return dataset_ids
 
@@ -218,7 +266,6 @@ def all_formats_exist(
         for fmt in formats
     )
 
-
 def download_dataset_files(
     erddap_url: str,
     dataset_id: str,
@@ -226,7 +273,7 @@ def download_dataset_files(
     download_dir: str,
     skip_existing: bool,
     logger: logging.Logger,
-) -> List[Tuple[str, str, str]]:
+) -> List[Tuple[str, str, str, str]]:
     """
     Download dataset files in specified formats.
 
@@ -255,7 +302,7 @@ def download_dataset_files(
             logger.error(
                 f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}"
             )
-            missed_formats.append((erddap_url, dataset_id, fmt))
+            missed_formats.append((erddap_url, dataset_id, fmt, e))
     return missed_formats
 
 
@@ -266,7 +313,6 @@ def download(url, file_path, logger):
     with open(file_path, "wb") as file:
         file.write(response.content)
     logger.debug(f"Saved data to {file_path}")
-
 
 def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
     """
@@ -282,8 +328,7 @@ def build_dataset_url(erddap_url: str, dataset_id: str, fmt: str) -> str:
     """
     return f"{erddap_url}/tabledap/{dataset_id}.{fmt}"
 
-
-def report_missed_formats(
+def do_error_report(
     missed_formats: List[Tuple[str, str, str]],
     downloads_folder: str,
     start_time: datetime,
