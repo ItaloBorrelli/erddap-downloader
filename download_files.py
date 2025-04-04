@@ -93,11 +93,12 @@ def extract_file_names_from_url(file_url: str, logger: logging.Logger) -> List[s
 
     for row in soup.find_all("tr"):
         tds = row.find_all("td")
-        if len(tds) > 0:
+        if len(tds) >=4:
             img_tag = tds[0].find("img")
             if img_tag:
                 href_tag = tds[1].find("a")
-                if href_tag and "bookmark" in href_tag.get("rel", ""):
+                file_size = tds[3].get_text(strip=True)
+                if href_tag and "bookmark" in href_tag.get("rel", "") and file_size != "0":
                     file_locations.append(href_tag["href"])
 
     return file_locations
