@@ -357,9 +357,10 @@ def download_dataset_files(
             logger.debug(f"Saved data to {file_path}")
         except requests.HTTPError as e:
             if response.status_code == 400 and fmt == "ncCF":
-                download_dataset_files(erddap_url,dataset_id,is_table,["nc"],download_dir,skip_existing, logger, vars)
-                message = f"ncCF not available for cdm_data_type=\"Other\". Downloading nc instead."
-                logger.info(message)
+                if not skip_existing or not os.path.exists(os.path.join(download_dir, f"{dataset_id}.nc")):
+                    download_dataset_files(erddap_url,dataset_id,is_table,["nc"],download_dir,skip_existing, logger, vars)
+                    message = f"ncCF not available for cdm_data_type=\"Other\". Downloading nc instead."
+                    logger.info(message)
             else:
                 logger.error(f"Failed to fetch data for datasetID {dataset_id} in format {fmt}. Error: {e}")
                 missed_formats.append((erddap_url, dataset_id, fmt, e))
